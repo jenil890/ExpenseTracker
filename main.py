@@ -15,8 +15,17 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QDoubleValidator
 
+import shutil
+from datetime import datetime
 
-DB_FILE = "expense_data.db"
+import os
+
+APP_FOLDER = os.path.join(os.getenv("LOCALAPPDATA"), "ExpenseTracker")
+
+if not os.path.exists(APP_FOLDER):
+    os.makedirs(APP_FOLDER)
+
+DB_FILE = os.path.join(APP_FOLDER, "expense_data.db")
 
 
 class ExpenseTracker(QMainWindow):
@@ -187,10 +196,16 @@ class ExpenseTracker(QMainWindow):
         self.add_btn = QPushButton("Add")
         self.del_btn = QPushButton("Delete")
         self.export_btn = QPushButton("Export")
+        self.backup_btn = QPushButton("Backup")
+        self.restore_btn = QPushButton("Restore")
+        self.report_btn = QPushButton("Report")
 
         btn_row.addWidget(self.add_btn)
         btn_row.addWidget(self.del_btn)
         btn_row.addWidget(self.export_btn)
+        btn_row.addWidget(self.backup_btn)
+        btn_row.addWidget(self.restore_btn)
+        btn_row.addWidget(self.report_btn) 
 
         right_layout.addLayout(btn_row)
 
@@ -255,6 +270,9 @@ class ExpenseTracker(QMainWindow):
         self.add_btn.clicked.connect(self.add_transaction)
         self.del_btn.clicked.connect(self.delete_transaction)
         self.export_btn.clicked.connect(self.export_csv)
+        self.backup_btn.clicked.connect(self.backup_database)
+        self.restore_btn.clicked.connect(self.restore_database)
+        self.report_btn.clicked.connect(self.generate_financial_report)
 
         self.search_box.textChanged.connect(self.search)
 
@@ -549,6 +567,165 @@ class ExpenseTracker(QMainWindow):
                 writer.writerow(r)
 
         QMessageBox.information(self, "Export", "Export successful")
+
+
+    # =========================
+    # DATABASE BACKUP
+    # =========================
+    def backup_database(self):
+
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            backup_name = f"expense_backup_{timestamp}.db"
+
+            backup_path = os.path.join(APP_FOLDER, backup_name)
+
+            self.db.commit()
+
+            shutil.copy(DB_FILE, backup_path)
+
+            QMessageBox.information(
+                self,
+                "Backup Created",
+                f"Backup saved successfully:\n{backup_path}"
+            )
+
+        except Exception as e:
+
+            QMessageBox.warning(
+                self,
+                "Backup Error",
+                str(e)
+            )
+    # =========================
+    # DATABASE RESTORE
+    # =========================
+    def restore_database(self):
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Backup File",
+            APP_FOLDER,
+            "Database Files (*.db)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            self.db.close()
+
+            shutil.copy(file_path, DB_FILE)
+
+            self.db = sqlite3.connect(DB_FILE)
+            self.cursor = self.db.cursor()
+
+            QMessageBox.information(
+                self,
+                "Restore Successful",
+                "Database restored successfully.\nRestart recommended."
+            )
+
+            self.load_categories()
+            self.load_table()
+
+        except Exception as e:
+
+            QMessageBox.warning(
+                self,
+                "Restore Failed",
+                str(e)
+            )
+
+    # =========================
+    # CLEAN OLD BACKUPS
+    # =========================
+    def clean_old_backups(self):
+
+        try:
+            now = datetime.now()
+
+            for file in os.listdir(APP_FOLDER):
+
+                if file.startswith("auto_backup_") or file.startswith("expense_backup_"):
+
+                    path = os.path.join(APP_FOLDER, file)
+
+                    file_time = datetime.fromtimestamp(os.path.getmtime(path))
+
+                    if (now - file_time).days > 30:
+                        os.remove(path)
+
+        except:
+            pass
+
+    # =========================
+    # FINANCIAL REPORT
+    # =========================
+    def generate_financial_report(self):
+
+        if not self.current_category:
+            QMessageBox.warning(self, "Report", "Select category first")
+            return
+
+        try:
+
+            rows = self.cursor.execute("""
+            SELECT date,item,inward,outward
+            FROM transactions
+            WHERE category=?
+            """, (self.current_category,))
+
+            report_name = f"financial_report_{self.current_category}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+            report_path = os.path.join(APP_FOLDER, report_name)
+
+            with open(report_path, "w", newline="") as f:
+
+                writer = csv.writer(f)
+
+                writer.writerow(["Date", "Item", "Inward", "Outward"])
+
+                total_in = 0
+                total_out = 0
+
+                for r in rows:
+                    writer.writerow(r)
+                    total_in += r[2]
+                    total_out += r[3]
+
+                writer.writerow([])
+                writer.writerow(["TOTAL INCOME", total_in])
+                writer.writerow(["TOTAL EXPENSE", total_out])
+                writer.writerow(["BALANCE", total_in - total_out])
+
+            QMessageBox.information(
+                self,
+                "Report Generated",
+                f"Report saved:\n{report_path}"
+            )
+
+        except Exception as e:
+
+            QMessageBox.warning(self, "Report Error", str(e))
+
+    def closeEvent(self, event):
+
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_name = f"auto_backup_{timestamp}.db"
+            backup_path = os.path.join(APP_FOLDER, backup_name)
+
+            self.db.commit()
+            shutil.copy(DB_FILE, backup_path)
+
+        except:
+            pass
+
+        self.clean_old_backups()
+        self.db.close()
+        event.accept()       
 
 
 app = QApplication(sys.argv)
