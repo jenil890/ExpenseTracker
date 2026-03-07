@@ -273,6 +273,7 @@ class ExpenseTracker(QMainWindow):
         self.backup_btn.clicked.connect(self.backup_database)
         self.restore_btn.clicked.connect(self.restore_database)
         self.report_btn.clicked.connect(self.generate_financial_report)
+        self.year_box.currentTextChanged.connect(self.change_year)
 
         self.search_box.textChanged.connect(self.search)
 
@@ -456,10 +457,12 @@ class ExpenseTracker(QMainWindow):
             return
 
         rows = self.cursor.execute("""
-        SELECT id,date,item,inward,outward
-        FROM transactions
-        WHERE category=? AND strftime('%m',date)=?
-        """, (self.current_category, f"{self.current_month:02d}"))
+           SELECT id,date,item,inward,outward
+           FROM transactions
+           WHERE category=? 
+           AND strftime('%m',date)=?
+           AND strftime('%Y',date)=?
+           """, (self.current_category, f"{self.current_month:02d}", self.current_year))
 
         balance = 0
 
@@ -478,6 +481,46 @@ class ExpenseTracker(QMainWindow):
             self.table.setItem(row, 3, QTableWidgetItem(str(inw)))
             self.table.setItem(row, 4, QTableWidgetItem(str(outw)))
             self.table.setItem(row, 5, QTableWidgetItem(str(balance)))
+    
+        self.update_summary()
+
+
+    # =========================
+    # UPDATE SUMMARY
+    # =========================
+    def update_summary(self):
+
+        if not self.current_category:
+            return
+
+        rows = self.cursor.execute("""
+            SELECT inward,outward
+            FROM transactions
+            WHERE category=? 
+            AND strftime('%m',date)=?
+            AND strftime('%Y',date)=?
+            """, (self.current_category, f"{self.current_month:02d}", self.current_year))
+
+        income = 0
+        expense = 0
+
+        for r in rows:
+            income += r[0]
+            expense += r[1]
+
+        balance = income - expense
+
+        # Dashboard cards
+        self.balance_card.setText(f"Balance\n{balance}")
+        self.income_card.setText(f"Income\n{income}")
+        self.expense_card.setText(f"Expense\n{expense}")
+
+        # Bottom summary
+        self.opening.setText("Opening: 0")
+        self.income.setText(f"Income: {income}")
+        self.expense.setText(f"Expense: {expense}")
+        self.closing.setText(f"Closing: {balance}")
+        self.forward.setText(f"Forward: {balance}")
 
     # =========================
     # ADD
@@ -726,6 +769,14 @@ class ExpenseTracker(QMainWindow):
         self.clean_old_backups()
         self.db.close()
         event.accept()       
+
+    # =========================
+    # CHANGE YEAR
+    # =========================
+    def change_year(self, year):
+    
+        self.current_year = year
+        self.load_table()    
 
 
 app = QApplication(sys.argv)
