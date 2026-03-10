@@ -209,6 +209,18 @@ class ExpenseTracker(QMainWindow):
 
         right_layout.addLayout(btn_row)
 
+        #MONTH INDICATOR
+        months = ["Jan","Feb","Mar","Apr","May","Jun",
+          "Jul","Aug","Sep","Oct","Nov","Dec"]
+
+        self.month_label = QLabel(f"Month: {months[self.current_month-1]}")
+        self.month_label.setAlignment(Qt.AlignCenter)
+        right_layout.addWidget(self.month_label)
+
+
+        self.month_label.setAlignment(Qt.AlignCenter)
+        right_layout.addWidget(self.month_label)
+
         # MONTH BUTTONS
         month_layout = QHBoxLayout()
 
@@ -439,12 +451,53 @@ class ExpenseTracker(QMainWindow):
         self.load_table()
 
     # =========================
-    # MONTH
+    # CHANGE MONTH
     # =========================
     def change_month(self, m):
 
         self.current_month = m
+
+        months = ["Jan","Feb","Mar","Apr","May","Jun",
+                  "Jul","Aug","Sep","Oct","Nov","Dec"]
+
+        # update month label
+        self.month_label.setText(f"Month: {months[m-1]}")
+
+        # get current date from date picker
+        current_date = self.date_input.date()
+
+        # change only the month (keep day and year)
+        new_date = QDate(current_date.year(), m, current_date.day())
+
+        # update the date picker
+        self.date_input.setDate(new_date)
+
+        # reload table
         self.load_table()
+
+    # =========================
+    # opning balace
+    # =========================
+
+    def get_opening_balance(self):
+
+        if not self.current_category:
+            return 0
+
+        rows = self.cursor.execute("""
+            SELECT inward, outward
+            FROM transactions
+            WHERE category=? AND date < ?
+        """, (self.current_category,
+              f"{self.current_year}-{self.current_month:02d}-01"))
+
+        opening = 0
+
+        for r in rows:
+            opening += r[0] - r[1]
+
+        return opening
+
 
     # =========================
     # TABLE
@@ -456,15 +509,16 @@ class ExpenseTracker(QMainWindow):
         if not self.current_category:
             return
 
-        rows = self.cursor.execute("""
+        rows = list(self.cursor.execute("""
            SELECT id,date,item,inward,outward
            FROM transactions
            WHERE category=? 
            AND strftime('%m',date)=?
            AND strftime('%Y',date)=?
-           """, (self.current_category, f"{self.current_month:02d}", self.current_year))
+           ORDER BY date ASC, id ASC                             
+           """, (self.current_category, f"{self.current_month:02d}", self.current_year)))
 
-        balance = 0
+        balance = self.get_opening_balance()
 
         for r in rows:
 
@@ -483,7 +537,7 @@ class ExpenseTracker(QMainWindow):
             self.table.setItem(row, 5, QTableWidgetItem(str(balance)))
     
         self.update_summary()
-
+        
 
     # =========================
     # UPDATE SUMMARY
@@ -516,7 +570,8 @@ class ExpenseTracker(QMainWindow):
         self.expense_card.setText(f"Expense\n{expense}")
 
         # Bottom summary
-        self.opening.setText("Opening: 0")
+        opening = self.get_opening_balance()
+        self.opening.setText(f"Opening: {opening}")
         self.income.setText(f"Income: {income}")
         self.expense.setText(f"Expense: {expense}")
         self.closing.setText(f"Closing: {balance}")
