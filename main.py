@@ -417,6 +417,22 @@ class ExpenseTracker(QMainWindow):
 
         self.load_categories()
 
+        # reset UI state
+        self.current_category = None
+        self.table.setRowCount(0)
+
+        # reset dashboard cards
+        self.balance_card.setText("Balance\n0")
+        self.income_card.setText("Income\n0")
+        self.expense_card.setText("Expense\n0")
+
+        # reset summary panel
+        self.opening.setText("Opening: 0")
+        self.income.setText("Income: 0")
+        self.expense.setText("Expense: 0")
+        self.closing.setText("Closing: 0")
+        self.forward.setText("Forward: 0")
+
     # =========================
     # OPEN CATEGORY
     # =========================
@@ -599,6 +615,12 @@ class ExpenseTracker(QMainWindow):
         self.db.commit()
 
         self.load_table()
+
+        # reset form
+        self.item_input.clear()
+        self.inward_input.clear()
+        self.outward_input.clear()
+        self.date_input.setDate(QDate.currentDate())
 
     # =========================
     # DELETE
