@@ -325,15 +325,11 @@ class ExpenseTracker(QMainWindow):
     def load_categories(self):
 
         self.category_list.clear()
-    
 
         rows = self.cursor.execute("SELECT name FROM categories")
 
         for r in rows:
             self.category_list.addItem(r[0])
-
-        if self.category_list.count() == 0:
-            self.current_category = None    
 
     def add_category(self):
 
@@ -408,15 +404,12 @@ class ExpenseTracker(QMainWindow):
         self.db.commit()
 
         self.load_categories()
-        self.current_category = None
-        self.table.setRowCount(0)
 
     # =========================
     # OPEN CATEGORY
     # =========================
     def open_category(self, name):
 
-       
         row = self.cursor.execute(
             "SELECT type,password FROM categories WHERE name=?",
             (name,)
@@ -471,7 +464,7 @@ class ExpenseTracker(QMainWindow):
            AND strftime('%Y',date)=?
            """, (self.current_category, f"{self.current_month:02d}", self.current_year))
 
-        balance = self.get_opening_balance()
+        balance = 0
 
         for r in rows:
 
@@ -491,27 +484,7 @@ class ExpenseTracker(QMainWindow):
     
         self.update_summary()
 
-    # =========================
-    # GET OPENING BALANCE
-    # =========================
-    def get_opening_balance(self):
 
-        if not self.current_category:
-            return 0
-
-        rows = self.cursor.execute("""
-         SELECT inward,outward,date
-         FROM transactions
-         WHERE category=?
-         AND date < ?
-        """, (self.current_category, f"{self.current_year}-{self.current_month:02d}-01"))
-
-        opening = 0
-
-        for r in rows:
-         opening += r[0] - r[1]
-
-        return opening
     # =========================
     # UPDATE SUMMARY
     # =========================
@@ -530,13 +503,12 @@ class ExpenseTracker(QMainWindow):
 
         income = 0
         expense = 0
-        opening = self.get_opening_balance()
 
         for r in rows:
             income += r[0]
             expense += r[1]
 
-        balance = opening + income - expense
+        balance = income - expense
 
         # Dashboard cards
         self.balance_card.setText(f"Balance\n{balance}")
@@ -544,7 +516,7 @@ class ExpenseTracker(QMainWindow):
         self.expense_card.setText(f"Expense\n{expense}")
 
         # Bottom summary
-        self.opening.setText(f"Opening: {opening}")
+        self.opening.setText("Opening: 0")
         self.income.setText(f"Income: {income}")
         self.expense.setText(f"Expense: {expense}")
         self.closing.setText(f"Closing: {balance}")
@@ -556,8 +528,7 @@ class ExpenseTracker(QMainWindow):
     def add_transaction(self):
 
         if not self.current_category:
-           QMessageBox.warning(self, "No Category", "Please select a category first.")
-           return
+            return
 
         date = self.date_input.date().toString("yyyy-MM-dd")
         item = self.item_input.text()
@@ -573,10 +544,6 @@ class ExpenseTracker(QMainWindow):
         self.db.commit()
 
         self.load_table()
-
-        self.item_input.clear()
-        self.inward_input.clear()
-        self.outward_input.clear()
 
     # =========================
     # DELETE
@@ -818,6 +785,3 @@ window = ExpenseTracker()
 window.show()
 
 sys.exit(app.exec())
-
-
-######################################################
