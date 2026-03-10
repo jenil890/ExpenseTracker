@@ -1,6 +1,5 @@
 import sys
 import sqlite3
-import hashlib
 import csv
 
 from PySide6.QtWidgets import (
@@ -277,7 +276,8 @@ class ExpenseTracker(QMainWindow):
         add_cat_btn.clicked.connect(self.add_category)
         del_cat_btn.clicked.connect(self.delete_category)
 
-        self.category_list.currentTextChanged.connect(self.open_category)
+        self.category_list.itemClicked.connect(self.open_category)
+        self.category_list.itemDoubleClicked.connect(self.deselect_category)
 
         self.add_btn.clicked.connect(self.add_transaction)
         self.del_btn.clicked.connect(self.delete_transaction)
@@ -354,7 +354,7 @@ class ExpenseTracker(QMainWindow):
             self,
             "Category Type",
             "Choose category type:",
-            ["Ledger (Income / Expense)", "Note (Money Lending)", "Hidden (Password Protected)"],
+            ["Ledger (Income / Expense)", "Note (Money Lending)"],
             0,
             False
         )
@@ -364,38 +364,23 @@ class ExpenseTracker(QMainWindow):
 
         if category_type.startswith("Ledger"):
             ctype = "ledger"
-        elif category_type.startswith("Note"):
-            ctype = "note"
         else:
-            ctype = "hidden"
+            ctype = "note"
 
-        password_hash = None
-
-        if ctype == "hidden":
-
-            pwd, ok = QInputDialog.getText(
-                self,
-                "Hidden Category Password",
-                "Enter password:",
-                QLineEdit.Password
-            )
-
-            if not ok or not pwd:
-                QMessageBox.warning(self, "Error", "Password required")
-                return
-
-            password_hash = hashlib.sha256(pwd.encode()).hexdigest()
-
+       
         try:
 
             self.cursor.execute(
                 "INSERT INTO categories (name,type,password) VALUES (?,?,?)",
-                (name, ctype, password_hash)
+                (name, ctype, None)
             )
 
             self.db.commit()
 
             self.category_list.addItem(name)
+
+            # auto select the newly created category
+            self.category_list.setCurrentRow(self.category_list.count() - 1)
 
         except sqlite3.IntegrityError:
             QMessageBox.warning(self, "Duplicate", "Category already exists")
@@ -436,7 +421,9 @@ class ExpenseTracker(QMainWindow):
     # =========================
     # OPEN CATEGORY
     # =========================
-    def open_category(self, name):
+    def open_category(self, item):
+
+        name = item.text()
 
         row = self.cursor.execute(
             "SELECT type,password FROM categories WHERE name=?",
@@ -448,23 +435,34 @@ class ExpenseTracker(QMainWindow):
 
         typ, pwd = row
 
-        if typ == "hidden":
-
-            text, ok = QInputDialog.getText(
-                self, "Password", "Enter password:", QLineEdit.Password
-            )
-
-            if not ok:
-                return
-
-            if hashlib.sha256(text.encode()).hexdigest() != pwd:
-                QMessageBox.warning(self, "Error", "Wrong password")
-                return
-
         self.current_category = name
         self.current_type = typ
 
         self.load_table()
+
+    # =========================
+    # DISSELECT CATEGORY
+    # ========================= 
+    def deselect_category(self):
+
+        self.category_list.clearSelection()
+
+        self.current_category = None
+
+        # clear table
+        self.table.setRowCount(0)
+
+        # reset dashboard
+        self.balance_card.setText("Balance\n0")
+        self.income_card.setText("Income\n0")
+        self.expense_card.setText("Expense\n0")
+
+        # reset summary
+        self.opening.setText("Opening: 0")
+        self.income.setText("Income: 0")
+        self.expense.setText("Expense: 0")
+        self.closing.setText("Closing: 0")
+        self.forward.setText("Forward: 0")     
 
     # =========================
     # CHANGE MONTH
@@ -545,12 +543,26 @@ class ExpenseTracker(QMainWindow):
             row = self.table.rowCount()
             self.table.insertRow(row)
 
-            self.table.setItem(row, 0, QTableWidgetItem(str(rid)))
-            self.table.setItem(row, 1, QTableWidgetItem(date))
-            self.table.setItem(row, 2, QTableWidgetItem(item))
-            self.table.setItem(row, 3, QTableWidgetItem(str(inw)))
-            self.table.setItem(row, 4, QTableWidgetItem(str(outw)))
-            self.table.setItem(row, 5, QTableWidgetItem(str(balance)))
+            id_item = QTableWidgetItem(str(rid))
+            date_item = QTableWidgetItem(date)
+            item_item = QTableWidgetItem(item)
+            inw_item = QTableWidgetItem(str(inw))
+            outw_item = QTableWidgetItem(str(outw))
+            bal_item = QTableWidgetItem(str(balance))
+
+            id_item.setTextAlignment(Qt.AlignCenter)
+            date_item.setTextAlignment(Qt.AlignCenter)
+            item_item.setTextAlignment(Qt.AlignCenter)
+            inw_item.setTextAlignment(Qt.AlignCenter)
+            outw_item.setTextAlignment(Qt.AlignCenter)
+            bal_item.setTextAlignment(Qt.AlignCenter)
+
+            self.table.setItem(row, 0, id_item)
+            self.table.setItem(row, 1, date_item)
+            self.table.setItem(row, 2, item_item)
+            self.table.setItem(row, 3, inw_item)
+            self.table.setItem(row, 4, outw_item)
+            self.table.setItem(row, 5, bal_item)
     
         self.update_summary()
         
@@ -604,8 +616,16 @@ class ExpenseTracker(QMainWindow):
         date = self.date_input.date().toString("yyyy-MM-dd")
         item = self.item_input.text()
 
-        inward = float(self.inward_input.text() or 0)
-        outward = float(self.outward_input.text() or 0)
+        inward_text = self.inward_input.text().strip() 
+        outward_text = self.outward_input.text().strip()
+
+        # validation: both empty
+        if not inward_text and not outward_text:
+            QMessageBox.warning(self, "Invalid Entry", "Enter amount in Inward or Outward.")
+            return
+
+        inward = float(inward_text or 0)
+        outward = float(outward_text or 0)
 
         self.cursor.execute("""
         INSERT INTO transactions(category,date,item,inward,outward)
