@@ -62,7 +62,7 @@ class ExpenseTracker(QMainWindow):
         CREATE TABLE IF NOT EXISTS categories(
             name TEXT PRIMARY KEY,
             type TEXT,
-            password TEXT
+            subtype TEXT
         )
         """)
 
@@ -338,10 +338,20 @@ class ExpenseTracker(QMainWindow):
 
         self.category_list.clear()
 
-        rows = self.cursor.execute("SELECT name FROM categories")
+        rows = self.cursor.execute("SELECT name, type, subtype FROM categories")
 
-        for r in rows:
-            self.category_list.addItem(r[0])
+        for name, typ, subtype in rows:
+
+            if typ == "ledger":
+                display = f"{name} (Ledger)"
+
+            elif typ == "note" and subtype:
+                display = f"{name} ({subtype})"
+
+            else:
+                display = name
+
+            self.category_list.addItem(display)
 
     def add_category(self):
 
@@ -367,12 +377,33 @@ class ExpenseTracker(QMainWindow):
         else:
             ctype = "note"
 
+        note_subtype = None
+
+        if ctype == "note":
+
+            note_subtype, ok = QInputDialog.getItem(
+                self,
+                "Note Category Type",
+                "Select note category type:",
+                [
+                    "Simple Note",
+                    "Loan",
+                    "Lended Money",
+                    "Borrowed Money"
+                ],
+                0,
+                False
+            )
+
+            if not ok:
+                return    
+
        
         try:
 
             self.cursor.execute(
-                "INSERT INTO categories (name,type,password) VALUES (?,?,?)",
-                (name, ctype, None)
+                "INSERT INTO categories (name,type,subtype) VALUES (?,?,?)",
+                (name, ctype, note_subtype)
             )
 
             self.db.commit()
@@ -392,7 +423,7 @@ class ExpenseTracker(QMainWindow):
         if not item:
             return
 
-        name = item.text()
+        name = item.text().split(" (")[0]
 
         self.cursor.execute("DELETE FROM categories WHERE name=?", (name,))
         self.cursor.execute("DELETE FROM transactions WHERE category=?", (name,))
@@ -423,17 +454,17 @@ class ExpenseTracker(QMainWindow):
     # =========================
     def open_category(self, item):
 
-        name = item.text()
+        name = item.text().split(" (")[0]
 
         row = self.cursor.execute(
-            "SELECT type,password FROM categories WHERE name=?",
+            "SELECT type,subtype FROM categories WHERE name=?",
             (name,)
         ).fetchone()
 
         if not row:
             return
 
-        typ, pwd = row
+        typ, subtype = row
 
         self.current_category = name
         self.current_type = typ
