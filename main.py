@@ -124,7 +124,7 @@ class ExpenseTracker(QMainWindow):
         right_layout = QVBoxLayout()
 
         # DASHBOARD CARDS
-        cards = QHBoxLayout()
+        self.cards_layout = QHBoxLayout()
 
         self.balance_card = QLabel("Balance\n0")
         self.income_card = QLabel("Income\n0")
@@ -132,9 +132,9 @@ class ExpenseTracker(QMainWindow):
 
         for c in [self.balance_card, self.income_card, self.expense_card]:
             c.setAlignment(Qt.AlignCenter)
-            cards.addWidget(c)
+            self.cards_layout.addWidget(c)
 
-        right_layout.addLayout(cards)
+        right_layout.addLayout(self.cards_layout)
 
         # SEARCH
         self.search_box = QLineEdit()
@@ -253,7 +253,7 @@ class ExpenseTracker(QMainWindow):
         right_layout.addWidget(self.table)
 
         # SUMMARY PANEL
-        summary = QHBoxLayout()
+        self.summary_layout = QHBoxLayout()
 
         self.opening = QLabel("Opening: 0")
         self.income = QLabel("Income: 0")
@@ -263,9 +263,9 @@ class ExpenseTracker(QMainWindow):
 
         for w in [self.opening, self.income, self.expense, self.closing, self.forward]:
             w.setAlignment(Qt.AlignCenter)
-            summary.addWidget(w)
+            self.summary_layout.addWidget(w)
 
-        right_layout.addLayout(summary)
+        right_layout.addLayout(self.summary_layout)
 
         right_widget = QWidget()
         right_widget.setLayout(right_layout)
@@ -338,14 +338,16 @@ class ExpenseTracker(QMainWindow):
 
         self.category_list.clear()
 
-        rows = self.cursor.execute("SELECT name, type, subtype FROM categories")
+        rows = self.cursor.execute(
+            "SELECT name, type, subtype FROM categories"
+        )
 
         for name, typ, subtype in rows:
 
-            if typ == "ledger":
+            if typ.lower() == "ledger":
                 display = f"{name} (Ledger)"
 
-            elif typ == "note" and subtype:
+            elif typ.lower() == "note":
                 display = f"{name} ({subtype})"
 
             else:
@@ -408,7 +410,15 @@ class ExpenseTracker(QMainWindow):
 
             self.db.commit()
 
-            self.category_list.addItem(name)
+            if ctype == "ledger":
+               display = f"{name} (Ledger)"
+            elif ctype == "note":
+               display = f"{name} ({note_subtype})"
+            else:
+               display = name
+
+            self.category_list.addItem(display)
+        
 
             # auto select the newly created category
             self.category_list.setCurrentRow(self.category_list.count() - 1)
@@ -466,8 +476,26 @@ class ExpenseTracker(QMainWindow):
 
         typ, subtype = row
 
+
+        self.current_subtype = subtype
         self.current_category = name
         self.current_type = typ
+
+        if self.current_type == "note":
+
+            for i in range(self.cards_layout.count()):
+                self.cards_layout.itemAt(i).widget().hide()
+
+            for i in range(self.summary_layout.count()):
+                self.summary_layout.itemAt(i).widget().hide()
+
+        else:
+
+            for i in range(self.cards_layout.count()):
+                self.cards_layout.itemAt(i).widget().show()
+
+            for i in range(self.summary_layout.count()):
+                self.summary_layout.itemAt(i).widget().show()
 
         self.load_table()
 
