@@ -8,12 +8,14 @@ from PySide6.QtWidgets import (
     QListWidget, QTableWidget, QTableWidgetItem,
     QPushButton, QInputDialog, QLineEdit,
     QDateEdit, QMessageBox, QLabel, QFileDialog,
-    QComboBox, QAbstractItemView
+    QComboBox, QAbstractItemView,QTextEdit,QSizePolicy
 )
 
+from PySide6.QtWidgets import QProgressBar
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QDoubleValidator
-
+from PySide6.QtGui import QKeySequence, QTextListFormat, QTextCharFormat, QFont, QAction
+from PySide6.QtWidgets import QToolBar
 import shutil
 from datetime import datetime
 
@@ -89,6 +91,30 @@ class ExpenseTracker(QMainWindow):
         )
         """)
 
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS loans(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT,
+            person TEXT,
+            loan_amount REAL,
+            interest REAL,
+            installments INTEGER,
+            emi REAL,
+            start_date TEXT,
+            remaining REAL,
+            status TEXT
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS loan_payments(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            loan_id INTEGER,
+            payment_date TEXT,
+            amount REAL
+        )
+        """)
+
         self.db.commit()
 
     # =========================
@@ -130,6 +156,8 @@ class ExpenseTracker(QMainWindow):
         self.income_card = QLabel("Income\n0")
         self.expense_card = QLabel("Expense\n0")
 
+        
+
         for c in [self.balance_card, self.income_card, self.expense_card]:
             c.setAlignment(Qt.AlignCenter)
             self.cards_layout.addWidget(c)
@@ -141,31 +169,77 @@ class ExpenseTracker(QMainWindow):
         self.search_box.setPlaceholderText("Search item...")
         right_layout.addWidget(self.search_box)
 
-        # YEAR + THEME
-        filter_layout = QHBoxLayout()
+        # NOte FORMAT TOOLBAR
+        self.note_toolbar = QToolBar()
+        self.note_toolbar.setMovable(False)
+
+        bold_action = QAction("B", self)
+        bold_action.setShortcut(QKeySequence("Ctrl+B"))
+        bold_action.triggered.connect(self.toggle_bold)
+
+        italic_action = QAction("I", self)
+        italic_action.setShortcut(QKeySequence("Ctrl+I"))
+        italic_action.triggered.connect(self.toggle_italic)
+
+        bullet_action = QAction("• List", self)
+        bullet_action.triggered.connect(self.toggle_bullet_list)
+
+        self.note_toolbar.addAction(bold_action)
+        self.note_toolbar.addAction(italic_action)
+        self.note_toolbar.addAction(bullet_action)
+
+        right_layout.addWidget(self.note_toolbar)
+
+        # DATE INPUT (create first)
+        self.date_input = QDateEdit()
+        self.date_input.setCalendarPopup(True)
+        self.date_input.setDate(QDate.currentDate())
+        self.date_input.setFixedWidth(200)
+
+        # YEAR + DATE + THEME (Single Row)
+        top_row = QHBoxLayout()
 
         self.year_box = QComboBox()
         for y in range(2020, 2036):
             self.year_box.addItem(str(y))
 
         self.year_box.setCurrentText(self.current_year)
+        self.year_box.setFixedWidth(120)
 
         self.theme_btn = QPushButton("Switch Theme")
+        self.theme_btn.setFixedWidth(180)
 
-        filter_layout.addWidget(QLabel("Year"))
-        filter_layout.addWidget(self.year_box)
-        filter_layout.addWidget(self.theme_btn)
+        top_row.addWidget(QLabel("Year"))
+        top_row.addWidget(self.year_box)
 
-        right_layout.addLayout(filter_layout)
+        top_row.addWidget(QLabel("Date"))
+        top_row.addWidget(self.date_input)
+
+        top_row.addWidget(self.theme_btn)
+
+        right_layout.addLayout(top_row)
 
         # FORM
-        form = QFormLayout()
-
-        self.date_input = QDateEdit()
-        self.date_input.setCalendarPopup(True)
-        self.date_input.setDate(QDate.currentDate())
+        self.form = QFormLayout()
 
         self.item_input = QLineEdit()
+        self.note_input = QTextEdit()
+        self.note_input.setMinimumHeight(120)
+        self.note_input.setSizePolicy(self.note_input.sizePolicy().horizontalPolicy(), QSizePolicy.Expanding)
+
+        # LOAN INPUT FIELDS
+        self.loan_amount_input = QLineEdit()
+        self.loan_amount_input.setValidator(QDoubleValidator(0, 999999999, 2))
+
+        self.interest_input = QLineEdit()
+        self.interest_input.setValidator(QDoubleValidator(0, 100, 2))
+
+        self.installment_input = QLineEdit()
+        self.installment_input.setValidator(QDoubleValidator(0, 9999, 0))
+
+        self.loan_start_date = QDateEdit()
+        self.loan_start_date.setCalendarPopup(True)
+        self.loan_start_date.setDate(QDate.currentDate())
 
         validator = QDoubleValidator(0, 999999999, 2)
 
@@ -175,24 +249,42 @@ class ExpenseTracker(QMainWindow):
         self.outward_input = QLineEdit()
         self.outward_input.setValidator(validator)
 
-        form.addRow("Date", self.date_input)
-        form.addRow("Item / Person", self.item_input)
 
-        money_row = QHBoxLayout()
+        self.item_row_label = QLabel("Item / Person")
+        self.note_row_label = QLabel("Note")
 
-        money_row.addWidget(QLabel("Inward / Amount"))
-        money_row.addWidget(self.inward_input)
-        money_row.addWidget(QLabel("Outward"))
-        money_row.addWidget(self.outward_input)
+        self.form.addRow(self.item_row_label, self.item_input)
+        self.form.addRow(self.note_row_label, self.note_input)
 
-        form.addRow(money_row)
+        # LOAN FORM ROWS
+        self.loan_amount_label = QLabel("Loan Amount")
+        self.interest_label = QLabel("Interest %")
+        self.installment_label = QLabel("Installments")
+        self.start_date_label = QLabel("Start Date")
 
-        right_layout.addLayout(form)
+        self.form.addRow(self.loan_amount_label, self.loan_amount_input)
+        self.form.addRow(self.interest_label, self.interest_input)
+        self.form.addRow(self.installment_label, self.installment_input)
+        self.form.addRow(self.start_date_label, self.loan_start_date)
+
+        self.note_row = self.form.rowCount() - 1
+
+        self.money_row = QHBoxLayout()
+
+        self.money_row.addWidget(QLabel("Inward / Amount"))
+        self.money_row.addWidget(self.inward_input)
+        self.money_row.addWidget(QLabel("Outward"))
+        self.money_row.addWidget(self.outward_input)
+
+        self.form.addRow(self.money_row)
+
+        right_layout.addLayout(self.form)
 
         # BUTTONS
         btn_row = QHBoxLayout()
 
         self.add_btn = QPushButton("Add")
+        self.pay_btn = QPushButton("Pay Installment")
         self.del_btn = QPushButton("Delete")
         self.export_btn = QPushButton("Export")
         self.backup_btn = QPushButton("Backup")
@@ -200,6 +292,7 @@ class ExpenseTracker(QMainWindow):
         self.report_btn = QPushButton("Report")
 
         btn_row.addWidget(self.add_btn)
+        btn_row.addWidget(self.pay_btn)
         btn_row.addWidget(self.del_btn)
         btn_row.addWidget(self.export_btn)
         btn_row.addWidget(self.backup_btn)
@@ -218,8 +311,7 @@ class ExpenseTracker(QMainWindow):
 
 
         self.month_label.setAlignment(Qt.AlignCenter)
-        right_layout.addWidget(self.month_label)
-
+    
         # MONTH BUTTONS
         month_layout = QHBoxLayout()
 
@@ -272,6 +364,11 @@ class ExpenseTracker(QMainWindow):
 
         main_layout.addWidget(right_widget, 4)
 
+        self.form.setRowVisible(self.loan_amount_label, False)
+        self.form.setRowVisible(self.interest_label, False)
+        self.form.setRowVisible(self.installment_label, False)
+        self.form.setRowVisible(self.start_date_label, False)
+
         # SIGNALS
         add_cat_btn.clicked.connect(self.add_category)
         del_cat_btn.clicked.connect(self.delete_category)
@@ -280,6 +377,7 @@ class ExpenseTracker(QMainWindow):
         self.category_list.itemDoubleClicked.connect(self.deselect_category)
 
         self.add_btn.clicked.connect(self.add_transaction)
+        self.pay_btn.clicked.connect(self.pay_installment)
         self.del_btn.clicked.connect(self.delete_transaction)
         self.export_btn.clicked.connect(self.export_csv)
         self.backup_btn.clicked.connect(self.backup_database)
@@ -330,7 +428,35 @@ class ExpenseTracker(QMainWindow):
             QTableWidget{background:#111;border-radius:8px;}
             """)
             self.dark_mode = True
+   
+    def toggle_bullet_list(self):
+        cursor = self.note_input.textCursor()
 
+        if cursor.currentList():
+            cursor.createList(QTextListFormat.ListDisc)
+        else:
+            fmt = QTextListFormat()
+            fmt.setStyle(QTextListFormat.ListDisc)
+            cursor.createList(fmt)
+   
+    def toggle_italic(self):
+        cursor = self.note_input.textCursor()
+        fmt = QTextCharFormat()
+
+        fmt.setFontItalic(not cursor.charFormat().fontItalic())
+        cursor.mergeCharFormat(fmt)
+    
+    
+    def toggle_bold(self):
+        cursor = self.note_input.textCursor()
+        fmt = QTextCharFormat()
+
+        if cursor.charFormat().fontWeight() == QFont.Bold:
+            fmt.setFontWeight(QFont.Normal)
+        else:
+            fmt.setFontWeight(QFont.Bold)
+
+        cursor.mergeCharFormat(fmt)
     # =========================
     # CATEGORY
     # =========================
@@ -481,24 +607,257 @@ class ExpenseTracker(QMainWindow):
         self.current_category = name
         self.current_type = typ
 
-        if self.current_type == "note":
+        # UI SWITCHING SYSTEM
+        if self.current_type == "ledger":
+            self.load_ledger_ui()
 
-            for i in range(self.cards_layout.count()):
-                self.cards_layout.itemAt(i).widget().hide()
+        elif self.current_subtype == "Simple Note":
+            self.load_simple_note_ui()
 
-            for i in range(self.summary_layout.count()):
-                self.summary_layout.itemAt(i).widget().hide()
+        elif self.current_subtype == "Loan":
+            self.load_loan_ui()
+
+        elif self.current_subtype == "Lended Money":
+            self.load_lended_ui()
+
+        elif self.current_subtype == "Borrowed Money":
+            self.load_borrowed_ui()
+
+        if self.current_subtype == "Loan":
+            self.load_loans()
+
+        elif self.current_subtype == "Simple Note":
+            self.load_notes()
 
         else:
+            self.load_table()
 
-            for i in range(self.cards_layout.count()):
-                self.cards_layout.itemAt(i).widget().show()
+    # =========================
+    # LEDGER UI
+    # =========================     
 
-            for i in range(self.summary_layout.count()):
-                self.summary_layout.itemAt(i).widget().show()
+    def load_ledger_ui(self):
 
-        self.load_table()
+        self.month_label.show()
 
+        for btn in self.month_buttons:
+            btn.show()
+
+        self.item_row_label.setText("Item / Person")
+        self.pay_btn.hide()
+        self.note_toolbar.hide()
+        self.form.setRowVisible(self.loan_amount_label, False)
+        self.form.setRowVisible(self.interest_label, False)
+        self.form.setRowVisible(self.installment_label, False)
+        self.form.setRowVisible(self.start_date_label, False)
+
+        # show item row
+        self.form.setRowVisible(self.item_row_label, True)
+
+        # hide note row
+        self.form.setRowVisible(self.note_row_label, False)
+
+        self.inward_input.show()
+        self.outward_input.show()
+
+        for i in range(self.money_row.count()):
+            widget = self.money_row.itemAt(i).widget()
+            if widget:
+                widget.show()
+
+        for i in range(self.cards_layout.count()):
+            self.cards_layout.itemAt(i).widget().show()
+
+        for i in range(self.summary_layout.count()):
+            self.summary_layout.itemAt(i).widget().show()
+
+        self.setup_ledger_table()
+    # =========================
+    # SIMPLE NOTe UI
+    # =========================  
+    def load_simple_note_ui(self):
+
+        self.month_label.hide()
+
+        for btn in self.month_buttons:
+            btn.hide()
+
+        self.pay_btn.hide()
+        self.note_toolbar.show()
+        self.form.setRowVisible(self.loan_amount_label, False)
+        self.form.setRowVisible(self.interest_label, False)
+        self.form.setRowVisible(self.installment_label, False)
+        self.form.setRowVisible(self.start_date_label, False)
+
+        # hide item row
+        self.form.setRowVisible(self.item_row_label, False)
+
+        # show note row
+        self.form.setRowVisible(self.note_row_label, True)
+
+        self.inward_input.hide()
+        self.outward_input.hide()
+
+        for i in range(self.money_row.count()):
+            widget = self.money_row.itemAt(i).widget()
+            if widget:
+                widget.hide()
+
+        for i in range(self.cards_layout.count()):
+            self.cards_layout.itemAt(i).widget().hide()
+
+        for i in range(self.summary_layout.count()):
+            self.summary_layout.itemAt(i).widget().hide()
+
+        self.setup_simple_note_table()
+
+    
+
+    # =========================
+    # LOAN UI
+    # ========================= 
+    def load_loan_ui(self):
+
+        self.month_label.hide()
+
+        for btn in self.month_buttons:
+            btn.hide()
+        self.pay_btn.show()
+
+        # show cards
+        for i in range(self.cards_layout.count()):
+            self.cards_layout.itemAt(i).widget().show()
+
+        # rename cards for loan
+        self.balance_card.setText("Total Loan\n0")
+        self.income_card.setText("Cleared\n0")
+        self.expense_card.setText("Remaining\n0")
+
+        # hide note editor and toolbar
+        self.note_input.hide()
+        self.note_toolbar.hide()
+
+        # show person field
+        self.form.setRowVisible(self.item_row_label, True)
+        self.item_row_label.setText("Loan Name")
+
+        # show loan fields
+        self.form.setRowVisible(self.loan_amount_label, True)
+        self.form.setRowVisible(self.interest_label, True)
+        self.form.setRowVisible(self.installment_label, True)
+        self.form.setRowVisible(self.start_date_label, True)
+
+        # hide note row
+        self.form.setRowVisible(self.note_row_label, False)
+
+        # hide ledger money fields
+        for i in range(self.money_row.count()):
+            widget = self.money_row.itemAt(i).widget()
+            if widget:
+                widget.hide()
+
+        # hide ledger summary panel
+        for i in range(self.summary_layout.count()):
+            self.summary_layout.itemAt(i).widget().hide()
+
+        # configure loan table
+        self.setup_loan_table()
+
+        # load loans from database
+        self.load_loans()   
+
+    def calculate_emi(self, principal, interest, months):
+
+        if months == 0:
+            return 0
+
+        r = (interest / 100) / 12
+
+        if r == 0:
+            return round(principal / months, 2)
+
+        emi = principal * r * (1 + r) ** months
+        emi = emi / ((1 + r) ** months - 1)
+
+        return round(emi, 2)    
+    
+    # =========================
+    # LENDED MONEY UI
+    # =========================
+    def load_lended_ui(self):
+
+        for i in range(self.cards_layout.count()):
+            self.cards_layout.itemAt(i).widget().hide()
+
+        for i in range(self.summary_layout.count()):
+            self.summary_layout.itemAt(i).widget().hide()
+
+        self.setup_lended_table()
+    # =========================
+    # BORROWED UI
+    # =========================
+    def load_borrowed_ui(self):
+
+        for i in range(self.cards_layout.count()):
+            self.cards_layout.itemAt(i).widget().hide()
+
+        for i in range(self.summary_layout.count()):
+            self.summary_layout.itemAt(i).widget().hide()
+
+        self.setup_borrowed_table()
+    # =========================
+    # TABEL SETUP
+    # =========================
+
+    def setup_ledger_table(self):
+
+        self.table.setColumnCount(6)
+
+        self.table.setHorizontalHeaderLabels(
+            ["ID","Date","Item","Inward","Outward","Balance"]
+        )
+
+        self.table.setColumnHidden(0, True)
+    
+    def setup_simple_note_table(self):
+
+        self.table.setColumnCount(3)
+
+        self.table.setHorizontalHeaderLabels(
+            ["ID","Date","Note"]
+        )
+
+        self.table.setColumnHidden(0, True)       
+
+    def setup_loan_table(self):
+
+        self.table.setColumnCount(9)
+
+        self.table.setHorizontalHeaderLabels(
+            ["ID","Date","Loan Name","Loan Amount","EMI","Cleared","Remaining","Next Installment","Progress"]
+        )
+
+        self.table.setColumnHidden(0, True)
+
+    def setup_lended_table(self):
+
+        self.table.setColumnCount(6)
+
+        self.table.setHorizontalHeaderLabels(
+            ["ID","Date","Person","Amount Given","Return Date","Status"]
+        )
+
+        self.table.setColumnHidden(0, True)
+
+    def setup_borrowed_table(self):
+
+        self.table.setColumnCount(6)
+
+        self.table.setHorizontalHeaderLabels(
+            ["ID","Date","Person","Amount Borrowed","Return Date","Status"]
+        )
+
+        self.table.setColumnHidden(0, True)
     # =========================
     # DISSELECT CATEGORY
     # ========================= 
@@ -624,12 +983,140 @@ class ExpenseTracker(QMainWindow):
             self.table.setItem(row, 5, bal_item)
     
         self.update_summary()
-        
 
+
+    def load_loans(self):
+
+        self.table.setRowCount(0)
+
+        total_loan = 0
+        total_cleared = 0
+        total_remaining = 0
+
+
+        rows = self.cursor.execute("""
+        SELECT id,start_date,person,loan_amount,interest,installments,emi,remaining,status
+        FROM loans
+        WHERE category=?
+        """,(self.current_category,))
+
+        for loan in rows:
+
+            loan_id, date, person, loan_amount, interest, installments, emi, remaining, status = loan
+            paid_count = self.cursor.execute(
+                "SELECT COUNT(*) FROM loan_payments WHERE loan_id=?",
+                (loan_id,)
+            ).fetchone()[0]
+            
+            cleared = loan_amount - remaining
+
+            total_loan += loan_amount
+            total_cleared += cleared
+            total_remaining += remaining
+
+            if remaining <= 0:
+                status = "Completed"
+            elif cleared > 0:
+                status = "Running"
+            else:
+                status = "Active"
+
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+
+            self.table.setItem(row,0,QTableWidgetItem(str(loan_id)))
+            self.table.setItem(row,1,QTableWidgetItem(date))
+            self.table.setItem(row,2,QTableWidgetItem(person))
+            self.table.setItem(row,3,QTableWidgetItem(str(loan_amount)))
+            self.table.setItem(row,4,QTableWidgetItem(str(emi)))
+            self.table.setItem(row,5,QTableWidgetItem(str(cleared)))
+            self.table.setItem(row,6,QTableWidgetItem(str(remaining)))
+            
+            start_qdate = QDate.fromString(date, "yyyy-MM-dd")
+            next_date = start_qdate.addMonths(paid_count + 1)
+
+            if remaining <= 0:
+                next_installment = "Completed"
+            else:
+                next_installment = next_date.toString("dd MMM yyyy")
+
+            self.table.setItem(row,7,QTableWidgetItem(next_installment))
+            progress = 0
+            if loan_amount > 0:
+                progress = int((cleared / loan_amount) * 100)
+
+            bar = QProgressBar()
+            bar.setValue(progress)
+
+            self.table.setCellWidget(row,8,bar)
+
+        self.balance_card.setText(f"Total Loan\n{total_loan}")
+        self.income_card.setText(f"Cleared\n{total_cleared}")
+        self.expense_card.setText(f"Remaining\n{total_remaining}")
+
+    def load_notes(self):
+
+        self.table.setRowCount(0)
+
+        rows = self.cursor.execute("""
+        SELECT id,date,person
+        FROM notes
+        WHERE category=?
+        ORDER BY date DESC
+        """,(self.current_category,))
+
+        for rid, date, note in rows:
+
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+
+            self.table.setItem(row,0,QTableWidgetItem(str(rid)))
+            self.table.setItem(row,1,QTableWidgetItem(date))
+            self.table.setItem(row,2,QTableWidgetItem(note))    
+
+
+    def pay_installment(self):
+
+        row = self.table.currentRow()
+
+        if row < 0:
+            return
+
+        loan_id = int(self.table.item(row,0).text())
+
+        amount, ok = QInputDialog.getDouble(self,"Installment","Payment amount")
+
+        if not ok:
+            return
+
+        today = QDate.currentDate().toString("yyyy-MM-dd")
+
+        self.cursor.execute("""
+        INSERT INTO loan_payments(loan_id,payment_date,amount)
+        VALUES(?,?,?)
+        """,(loan_id,today,amount))
+
+        self.cursor.execute("""
+        UPDATE loans
+        SET remaining = CASE 
+            WHEN remaining - ? < 0 THEN 0
+            ELSE remaining - ?
+        END        
+        WHERE id=?
+        """,(amount,amount,loan_id))
+        self.db.commit()
+
+        self.load_loans()     
+
+
+    
     # =========================
     # UPDATE SUMMARY
     # =========================
     def update_summary(self):
+
+        if self.current_subtype == "Loan":
+            return
 
         if not self.current_category:
             return
@@ -649,7 +1136,8 @@ class ExpenseTracker(QMainWindow):
             income += r[0]
             expense += r[1]
 
-        balance = income - expense
+        opening = self.get_opening_balance()
+        balance = opening + income - expense
 
         # Dashboard cards
         self.balance_card.setText(f"Balance\n{balance}")
@@ -668,6 +1156,76 @@ class ExpenseTracker(QMainWindow):
     # ADD
     # =========================
     def add_transaction(self):
+        
+        if self.current_subtype == "Loan":
+
+         person = self.item_input.text().strip()
+         amount = float(self.loan_amount_input.text() or 0)
+         interest = float(self.interest_input.text() or 0)
+         months = int(float(self.installment_input.text() or 0))
+         start_date = self.loan_start_date.date().toString("yyyy-MM-dd")
+
+         if not person or amount <= 0:
+             QMessageBox.warning(self, "Loan", "Enter person and loan amount")
+             return
+
+         emi = self.calculate_emi(amount, interest, months)
+
+         self.cursor.execute("""
+         INSERT INTO loans(category,person,loan_amount,interest,installments,emi,start_date,remaining,status)
+         VALUES(?,?,?,?,?,?,?,?,?)
+         """,(
+             self.current_category,
+             person,
+             amount,
+             interest,
+             months,
+             emi,
+             start_date,
+             amount,
+             "Active"
+         ))
+
+         self.db.commit()
+
+         self.load_loans()
+
+         self.item_input.clear()
+         self.loan_amount_input.clear()
+         self.interest_input.clear()
+         self.installment_input.clear()
+         return
+
+
+        if self.current_subtype == "Simple Note":
+
+            note_text = self.note_input.toPlainText().strip()
+            date = self.date_input.date().toString("yyyy-MM-dd")
+
+            if not note_text:
+                QMessageBox.warning(self, "Note", "Enter a note")
+                return
+
+            self.cursor.execute("""
+            INSERT INTO notes(category,date,person,amount,return_date,status)
+            VALUES(?,?,?,?,?,?)
+            """, (
+                self.current_category,
+                date,
+                note_text,
+                0,
+                "",
+                ""
+            ))
+
+            self.db.commit()
+
+            self.load_notes()
+
+            self.note_input.clear()
+
+            return
+
 
         if not self.current_category:
             return
@@ -701,6 +1259,8 @@ class ExpenseTracker(QMainWindow):
         self.outward_input.clear()
         self.date_input.setDate(QDate.currentDate())
 
+        
+
     # =========================
     # DELETE
     # =========================
@@ -712,6 +1272,16 @@ class ExpenseTracker(QMainWindow):
             return
 
         tid = int(self.table.item(row, 0).text())
+
+         # Handle loan deletion
+        if self.current_subtype == "Loan":
+
+            self.cursor.execute("DELETE FROM loans WHERE id=?", (tid,))
+            self.cursor.execute("DELETE FROM loan_payments WHERE loan_id=?", (tid,))
+            self.db.commit()
+
+            self.load_loans()
+            return
 
         self.cursor.execute(
             "DELETE FROM transactions WHERE id=?", (tid,)
